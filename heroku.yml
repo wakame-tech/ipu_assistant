@@ -2,4 +2,4 @@ build:
   docker:
     web: Dockerfile
 run:
-  web: cargo run
+  web: ./target/release/ipu_assistant

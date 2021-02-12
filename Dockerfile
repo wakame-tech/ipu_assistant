@@ -34,4 +34,4 @@ RUN apt-get update \
 
 WORKDIR /app
 
-CMD ["cargo", "run"]
+CMD ["cargo", "build", "--release"]
