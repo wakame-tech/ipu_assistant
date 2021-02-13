@@ -1,1 +1,1 @@
-worker: cargo run --release
+worker: ls

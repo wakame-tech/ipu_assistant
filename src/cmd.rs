@@ -61,6 +61,9 @@ async fn increment_user(pool: &Pool<Postgres>, id: &String, amount: i32) -> Resu
 
 pub async fn process_cmd(msg: &Message) -> Result<Option<String>, sqlx::Error> {
     match &msg.content[..] {
+        "!ipu help" => {
+            Ok(Some(env!("CARGO_PKG_VERSION").to_string()))
+        }
         "!all" => {
             let pool = Pool::<Postgres>::connect(&CONFIG.database_url()).await?;
             let users = get_all_users(&pool).await.unwrap();

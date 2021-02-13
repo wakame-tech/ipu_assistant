@@ -8,7 +8,7 @@ services:
     command: bash
     tty: true
     env_file:
-      - .env
+      - .env.prd
     volumes:
       - ./:/app
     ports:
