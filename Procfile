@@ -1,1 +1,1 @@
-worker: ls
+worker: ./target/release/ipu_assistant
