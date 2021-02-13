@@ -66,7 +66,7 @@ pub async fn process_cmd(msg: &Message) -> Result<Option<String>, sqlx::Error> {
         }
         "!all" => {
             let pool = Pool::<Postgres>::connect(&CONFIG.database_url()).await?;
-            let users = get_all_users(&pool).await.unwrap();
+            let users = get_all_users(&pool).await?;
             let res = users.iter().map(|u| format!("{} {}", u.name, u.count)).collect::<Vec<_>>().join("\n");
             if res.is_empty() {
                 Ok(Some("not found".to_string()))

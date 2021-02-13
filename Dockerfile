@@ -34,4 +34,7 @@ RUN apt-get update \
 
 WORKDIR /app
 
-CMD ["cargo", "build", "--release"]
+RUN cargo build --release
+
+RUN echo "migrate"
+RUN cargo make migrate
