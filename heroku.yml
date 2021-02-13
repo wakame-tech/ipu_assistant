@@ -1,5 +1,16 @@
+# <https://devcenter.heroku.com/ja/articles/build-docker-images-heroku-yml#setup-defining-your-app-s-environment>
+setup:
+  addons:
+    - plan: heroku-postgresql
 build:
   docker:
     worker: Dockerfile
+release:
+  image: worker
+  command:
+    - cargo make migrate
 run:
-  worker: cargo make migrate && cargo run --release
+  worker:
+    command:
+      - ./target/release/ipu_assistant
+    image: worker

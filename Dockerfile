@@ -35,6 +35,3 @@ RUN apt-get update \
 WORKDIR /app
 
 RUN cargo build --release
-
-RUN echo "migrate"
-RUN cargo make migrate
