@@ -1,6 +1,6 @@
 use once_cell::sync::Lazy;
 pub struct Config {
-    database_url: String,
+    pub database_url: String,
 }
 
 pub static CONFIG: Lazy<Config> = Lazy::new(|| Config {

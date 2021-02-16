@@ -65,7 +65,7 @@ pub async fn process_cmd(msg: &Message) -> Result<Option<String>, sqlx::Error> {
             Ok(Some(env!("CARGO_PKG_VERSION").to_string()))
         }
         "!all" => {
-            let pool = Pool::<Postgres>::connect(&CONFIG.database_url()).await?;
+            let pool = Pool::<Postgres>::connect(&CONFIG.database_url.to_string()).await?;
             let users = get_all_users(&pool).await?;
             let res = users.iter().map(|u| format!("{} {}", u.name, u.count)).collect::<Vec<_>>().join("\n");
             if res.is_empty() {
@@ -75,7 +75,7 @@ pub async fn process_cmd(msg: &Message) -> Result<Option<String>, sqlx::Error> {
             }
         }
         "!reset" => {
-            let pool = Pool::<Postgres>::connect(&CONFIG.database_url()).await?;
+            let pool = Pool::<Postgres>::connect(&CONFIG.database_url.to_string()).await?;
             delete_all_users(&pool).await?;
             pool.close().await;
             Ok(Some("reseted".to_string()))
@@ -84,7 +84,7 @@ pub async fn process_cmd(msg: &Message) -> Result<Option<String>, sqlx::Error> {
             let delay_cmd = Regex::new(r"^\+(\d+)").unwrap();
 
             if let Some(caps) = delay_cmd.captures(&msg.content) {
-                let pool = Pool::<Postgres>::connect(&CONFIG.database_url()).await?;
+                let pool = Pool::<Postgres>::connect(&CONFIG.database_url.to_string()).await?;
                 let amount: i32 = caps.at(1).unwrap().parse().unwrap();
                 let id = msg.author.id.to_string();
                 let name = msg.author.name.to_string();
