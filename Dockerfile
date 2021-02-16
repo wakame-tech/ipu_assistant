@@ -1,5 +1,7 @@
 FROM rust:1.49.0-slim-buster
 
+WORKDIR /app
+
 ENV CARGO_TARGET_DIR=/tmp/target \
     DEBIAN_FRONTEND=noninteractive \
     LC_CTYPE=ja_JP.utf8 \
@@ -31,7 +33,5 @@ RUN apt-get update \
   && echo "install rust tools" \
   && rustup component add rustfmt \
   && cargo install cargo-watch cargo-make
-
-WORKDIR /app
 
 RUN cargo build --release
