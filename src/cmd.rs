@@ -1,111 +1,175 @@
-use anyhow::{Result};
+use anyhow::{Result, anyhow};
 use regex::Regex;
 use serenity::model::channel::Message;
-use sqlx::{Pool, Postgres, Row};
-use crate::model::{User};
-use crate::config::CONFIG;
+use sqlx::{Pool, Postgres};
+use crate::{config::CONFIG, user_repository::*, events_repository::*};
+use std::str::FromStr;
+use cron::Schedule;
+use chrono::{DateTime, Local};
+use itertools::Itertools;
 
-async fn get_all_users(pool: &Pool<Postgres>) -> Result<Vec<User>, sqlx::Error> {
-    let users = sqlx::query_as::<_, User>("select * from users")
-        .fetch_all(pool)
-        .await?;
-    Ok(users)
+/// !help shows commands list
+fn help() -> Result<Option<String>, anyhow::Error> {
+    let version = env!("CARGO_PKG_VERSION").to_string();
+    Ok(Some(
+        format!(r#"ipu_assistant ver {}
+- `!all: ポイントを確認する`
+- `!reset: ポイントをリセットする`
+- `+<num>: {{num}}分遅れる`
+- `!add_event <event> <cron>`: 定期イベント {{event}} を追加する
+"#, &version)
+    ))
 }
 
-async fn delete_all_users(pool: &Pool<Postgres>) -> Result<(), sqlx::Error> {
-    sqlx::query("delete from users")
-        .fetch_all(pool)
-        .await?;
-    Ok(())
+/// !all returns all delays info
+async fn all() -> Result<Option<String>, anyhow::Error> {
+    let pool = Pool::<Postgres>::connect(&CONFIG.database_url.to_string()).await?;
+    let repo = UserRepository { pool };
+    let users = repo.get_all_users().await?;
+    let res = users.iter().map(|u| format!("{} 📃 {}", u.name, u.count)).collect::<Vec<_>>().join("\n");
+    if res.is_empty() {
+        Ok(Some("not found".to_string()))
+    } else {
+        Ok(Some(res))
+    }
 }
 
-async fn insert_user(pool: &Pool<Postgres>, id: &String, name: &String) -> Result<(), sqlx::Error> {
-    println!("insert user {:?} {:?}", id, name);
-    sqlx::query(r#"
-        INSERT INTO users (id, name, count) VALUES ($1, $2, 0)
-    "#)
-    .bind(id)
-    .bind(name)
-    .fetch_one(pool)
-    .await?;
-
-    Ok(())
+/// !reset
+async fn reset() -> Result<Option<String>, anyhow::Error> {
+    let pool = Pool::<Postgres>::connect(&CONFIG.database_url.to_string()).await?;
+    let repo = UserRepository { pool };
+    repo.delete_all_users().await?;
+    Ok(Some("reseted".to_string()))
 }
 
-async fn exist_user(pool: &Pool<Postgres>, id: &String) -> Result<bool, sqlx::Error> {
-    println!("exist user {:?}", id);
-    let exists = sqlx::query(r#"
-        select exists (select * from users where id = $1)
-    "#)
-    .bind(id)
-    .map(|row: sqlx::postgres::PgRow| row.get(0))
-    .fetch_one(pool)
-    .await?;
+/// +<minutes>
+async fn delay(id: &String, name: &String, amount: i32) -> Result<Option<String>, anyhow::Error> {
+    let pool = Pool::<Postgres>::connect(&CONFIG.database_url.to_string()).await?;
+    let repo =  UserRepository { pool };
 
-    Ok(exists)
+    let count = amount / 10;
+
+    let exists = repo.exist_user(&id).await?;
+    if !exists {
+        repo.insert_user(&id, &name).await?;
+    }
+    repo.increment_user(&id, count).await?;
+    Ok(Some(format!("📃 +{}", count).to_string()))
 }
 
-async fn increment_user(pool: &Pool<Postgres>, id: &String, amount: i32) -> Result<(), sqlx::Error> {
-    println!("increment user {:?} {:?}", id, amount);
-    // let mut tx = pool.begin().await?;
-    sqlx::query(r#"
-        update users set count = count + $1 where id = $2
-    "#)
-    .bind(amount)
-    .bind(id)
-    .fetch_one(pool)
-    .await?;
+/// returns latest 10 events
+async fn events() -> Result<Option<String>, anyhow::Error> {
+    let pool = Pool::<Postgres>::connect(&CONFIG.database_url.to_string()).await?;
+    let repo =  EventRepository { pool };
+    let events = repo.get_all_events().await?;
 
-    Ok(())
+    let latest_events = events
+        .iter()
+        .flat_map(|event|
+            Schedule::from_str(event.cron.as_str())
+                .unwrap()
+                .upcoming(Local)
+                .take(10)
+                .collect::<Vec<DateTime<Local>>>()
+        )
+        .into_iter()
+        .sorted()
+        .iter()
+        .take(10)
+        .map(|d| d.format("%m月%d日(%a) %H時").to_string())
+        .map(|s| format!("- {}", s))
+        .collect::<Vec<String>>()
+        .join("\n");
+
+    Ok(Some(latest_events))
 }
 
-pub async fn process_cmd(msg: &Message) -> Result<Option<String>, sqlx::Error> {
-    match &msg.content[..] {
-        "!ipu help" => {
-            Ok(Some(env!("CARGO_PKG_VERSION").to_string()))
-        }
-        "!all" => {
-            let pool = Pool::<Postgres>::connect(&CONFIG.database_url.to_string()).await?;
-            let users = get_all_users(&pool).await?;
-            let res = users.iter().map(|u| format!("{} {}", u.name, u.count)).collect::<Vec<_>>().join("\n");
-            if res.is_empty() {
-                Ok(Some("not found".to_string()))
-            } else {
-                Ok(Some(res))
+/// cron-like -> cron
+fn parse_date_pattern(pattern: String) -> Option<String> {
+    todo!()
+    // let args = pattern.split(" ")
+    //     .collect::<Vec<&str>>();
+    // if args.len() < 2 {
+    //     return None
+    // }
+    // Some(format!("0 0 {} * * {} *", args[0], args[1]))
+}
+
+/// register periodic event
+/// !add <event> <cron-pattern>
+async fn add_event(event_name: String, cron_pattern: String) -> Result<Option<String>, anyhow::Error> {
+    let pool = Pool::<Postgres>::connect(&CONFIG.database_url.to_string()).await?;
+    let repo =  EventRepository { pool };
+
+    match Schedule::from_str(&cron_pattern[..]) {
+        Ok(schedule) => {
+            let schedules = schedule.upcoming(Local)
+            .take(5)
+            .map(|d| d.format("%m月%d日(%a) %H時").to_string())
+            .map(|s| format!("- {}", s))
+            .collect::<Vec<String>>()
+            .join("\n");
+
+            repo.insert_event(&event_name, &cron_pattern).await?;
+
+            Ok(Some(format!("✨ {} を登録しました\n{}", event_name, schedules)))
+        },
+        Err(err) => Err(anyhow!(err)),
+    }
+}
+
+async fn update_event(event_name: String, cron_pattern: String) -> Result<Option<String>, anyhow::Error> {
+    let pool = Pool::<Postgres>::connect(&CONFIG.database_url.to_string()).await?;
+    let repo =  EventRepository { pool };
+
+    match Schedule::from_str(&cron_pattern[..]) {
+        Ok(schedule) => {
+            let schedules = schedule.upcoming(Local)
+            .take(5)
+            .map(|d| d.format("%m月%d日(%a) %H時").to_string())
+            .map(|s| format!("- {}", s))
+            .collect::<Vec<String>>()
+            .join("\n");
+
+            repo.update_event(&event_name, &cron_pattern).await?;
+
+            Ok(Some(format!("✨ {} を更新しました\n{}", event_name, schedules)))
+        },
+        Err(err) => Err(anyhow!(err)),
+    }
+}
+
+pub async fn process_cmd(msg: &Message) -> Result<Option<String>, anyhow::Error> {
+    match msg.content.as_str() {
+        "!help" => help(),
+        "!all" => all().await,
+        "!reset" => reset().await,
+        _ if msg.content.starts_with("!add_event") => {
+            let args: Vec<&str> = msg.content.split(" ").collect();
+            if args.len() < 3 {
+                return Ok(Some("invalid".to_string()))
             }
-        }
-        "!reset" => {
-            let pool = Pool::<Postgres>::connect(&CONFIG.database_url.to_string()).await?;
-            delete_all_users(&pool).await?;
-            pool.close().await;
-            Ok(Some("reseted".to_string()))
-        }
-        _ => {
-            let delay_cmd = Regex::new(r"^\+(\d+)").unwrap();
-
-            if let Some(caps) = delay_cmd.captures(&msg.content) {
-                let pool = Pool::<Postgres>::connect(&CONFIG.database_url.to_string()).await?;
+            let (event, pattern) = (args[1].to_string(), args[2..].join(" "));
+            add_event(event, pattern).await
+        },
+        _ if msg.content.starts_with("!update_event") => {
+            let args: Vec<&str> = msg.content.split(" ").collect();
+            if args.len() < 3 {
+                return Ok(Some("invalid".to_string()))
+            }
+            let (event, pattern) = (args[1].to_string(), args[2..].join(" "));
+            update_event(event, pattern).await
+        },
+        _ if msg.content.starts_with("!events") => events().await,
+        _ if msg.content.starts_with("+") => {
+            if let Some(caps) = Regex::new(r"^\+(\d+)").unwrap().captures(&msg.content) {
                 let amount: i32 = caps.at(1).unwrap().parse().unwrap();
                 let id = msg.author.id.to_string();
                 let name = msg.author.name.to_string();
-                let exists = exist_user(&pool, &id).await?;
-                if exists {
-                    // present
-                    println!("{:?} present", &id);
-                    increment_user(&pool, &id, amount).await?;
-                    pool.close().await;
-                    return Ok(Some("ok".to_string()))
-                } else {
-                    // absent
-                    println!("{:?} absent", &id);
-                    insert_user(&pool, &id, &name).await?;
-                    increment_user(&pool, &id, amount).await?;
-                    pool.close().await;
-                    return Ok(Some("ok".to_string()))
-                }
-            } else {
-                Ok(None)
+                return delay(&id, &name, amount).await
             }
-        }
+            Ok(None)
+        },
+        _ => Ok(None)
     }
 }

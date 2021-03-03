@@ -13,4 +13,6 @@ tokio = { version = "0.2.21", features = ["full"] }
 anyhow = "=1.0.36"
 once_cell = "=1.5.2"
 chrono = "=0.4.19"
+cron = "0.8.0"
+itertools = "0.4.7"
 serenity = { version = "0.9", default-features = false, features = ["client", "gateway", "rustls_backend", "model"] }

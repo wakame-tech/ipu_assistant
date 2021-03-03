@@ -8,22 +8,22 @@ services:
     command: bash
     tty: true
     env_file:
-      - .env.prd
+      - .env
     volumes:
       - ./:/app
     ports:
       - 3000:3000
-    # depends_on:
-    #   - postgres
-  # postgres:
-  #   image: postgres:12.3-alpine
-  #   container_name: postgres
-  #   env_file:
-  #     - .env
-  #   ports:
-  #     - "5433:5432"
-  #   volumes:
-  #     - pgdata:/var/lib/postgresql/data
+    depends_on:
+      - postgres
+  postgres:
+    image: postgres:12.3-alpine
+    container_name: postgres
+    env_file:
+      - .env
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
 
 volumes:
   pgdata:
