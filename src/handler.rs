@@ -1,7 +1,5 @@
-use cmd::process_cmd;
 use serenity::{async_trait, model::{channel::Message, gateway::Ready, id::GuildId, prelude::VoiceState}, prelude::*};
 use crate::cmd::{self};
-use chrono::*;
 
 pub struct Handler;
 
@@ -11,12 +9,15 @@ impl EventHandler for Handler {
         match cmd::process_cmd(&msg).await {
             Ok(Some(res)) => {
                 println!("res = {:?}", res);
-                if let Err(why) = msg.channel_id.say(&ctx.http, res).await {
-                    println!("Error: {:?}", why);
+                if let Err(err) = msg.channel_id.say(&ctx.http, res).await {
+                    println!("Error: {:?}", err);
                 }
             }
             Err(err) => {
                 println!("{}", err);
+                if let Err(err) = msg.channel_id.say(&ctx.http, err.to_string()).await {
+                    println!("Error: {:?}", err);
+                }
             }
             _ => {}
         }

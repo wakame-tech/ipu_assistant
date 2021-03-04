@@ -1,5 +1,10 @@
+use cron::Schedule;
 use sqlx::{Pool, Postgres};
-use crate::model::{User, Event};
+use crate::model::{Event, PeriodicEvent};
+use anyhow::{Result};
+use std::str::FromStr;
+use chrono::{Date, DateTime, Local};
+use itertools::Itertools;
 
 #[derive(Clone)]
 pub struct EventRepository {
@@ -7,13 +12,21 @@ pub struct EventRepository {
 }
 
 impl EventRepository {
-    pub async fn get_all_events(&self) -> Result<Vec<Event>, sqlx::Error> {
-        let events = sqlx::query_as::<_, Event>(
+    pub async fn get_all_events(&self) -> Result<Vec<PeriodicEvent>, sqlx::Error> {
+        let events = sqlx::query_as::<_, PeriodicEvent>(
             "SELECT * FROM events"
         )
             .fetch_all(&self.pool)
             .await?;
         Ok(events)
+    }
+
+    pub async fn delete_events(&self, event_name: &String) -> Result<(), sqlx::Error> {
+        sqlx::query("DELETE FROM events WHERE event = $1")
+            .bind(event_name)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
     }
 
     pub async fn delete_all_events(&self) -> Result<(), sqlx::Error> {
@@ -23,8 +36,9 @@ impl EventRepository {
         Ok(())
     }
 
-    pub async fn insert_event(&self, event_name: &String, cron: &String) -> Result<User, sqlx::Error> {
-        let user = sqlx::query_as::<_, User>(r#"
+    pub async fn insert_event(&self, event_name: &String, cron: &String) -> Result<PeriodicEvent, sqlx::Error> {
+        dbg!("insert_event", event_name, cron);
+        let event = sqlx::query_as::<_, PeriodicEvent>(r#"
                 INSERT INTO events (event, cron) VALUES ($1, $2)
             "#)
             .bind(event_name)
@@ -32,21 +46,11 @@ impl EventRepository {
             .fetch_one(&self.pool)
             .await?;
 
-        Ok(user)
-    }
-
-    pub async fn exist_user(&self, id: &String) -> Result<bool, sqlx::Error> {
-        let users = sqlx::query_as::<_, User>(r#"
-            SELECT * FROM users WHERE id = $1
-            "#)
-            .bind(id)
-            .fetch_all(&self.pool)
-            .await?;
-
-        Ok(users.len() != 0)
+        Ok(event)
     }
 
     pub async fn update_event(&self, event_name: &String, cron: &String) -> Result<(), sqlx::Error> {
+        dbg!("update_event", event_name, cron);
         sqlx::query(r#"
                 UPDATE events SET cron = $2 WHERE event = $1
             "#)
@@ -56,5 +60,39 @@ impl EventRepository {
             .await?;
 
         Ok(())
+    }
+
+    pub fn get_latest_events_by_limit(&self, periodic_events: Vec<PeriodicEvent>, limit: usize) -> impl Iterator<Item = Event> {
+         periodic_events
+            .iter()
+            .flat_map(|event|
+                Schedule::from_str(event.cron.as_str())
+                    .unwrap()
+                    .upcoming(Local)
+                    .take(limit)
+                    .map(|date|Event { event: event.event.clone(), date })
+                    .collect::<Vec<_>>()
+            )
+        .into_iter()
+        .sorted_by(|a, b| Ord::cmp(&a.date, &b.date))
+        .into_iter()
+        .take(limit)
+        .into_iter()
+    }
+
+    pub fn get_latest_events_until(&self, periodic_events: Vec<PeriodicEvent>, to: &DateTime<Local>) -> impl Iterator<Item = Event> {
+         periodic_events
+            .iter()
+            .flat_map(|event|
+                Schedule::from_str(event.cron.as_str())
+                    .unwrap()
+                    .upcoming(Local)
+                    .take_while(|d| d <= to )
+                    .map(|date| Event { event: event.event.clone(), date })
+                    .collect::<Vec<_>>()
+            )
+        .into_iter()
+        .sorted_by(|a, b| Ord::cmp(&a.date, &b.date))
+        .into_iter()
     }
 }

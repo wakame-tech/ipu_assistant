@@ -5,6 +5,13 @@ skip_core_tasks = true
 watch = { watch = ["src"] }
 run_task = "test"
 
+[tasks.run]
+env_files = [
+  ".env",
+]
+command = "cargo"
+args = ["run"]
+
 [tasks.test]
 command = "cargo"
 args = ["test", "--", "--nocapture", "-q"]

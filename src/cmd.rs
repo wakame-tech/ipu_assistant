@@ -8,21 +8,27 @@ use cron::Schedule;
 use chrono::{DateTime, Local};
 use itertools::Itertools;
 
+const LIMIT: usize = 10;
+const PREVIEW_LIMIT: usize = 5;
+
 /// !help shows commands list
 fn help() -> Result<Option<String>, anyhow::Error> {
     let version = env!("CARGO_PKG_VERSION").to_string();
     Ok(Some(
         format!(r#"ipu_assistant ver {}
-- `!all: ポイントを確認する`
-- `!reset: ポイントをリセットする`
-- `+<num>: {{num}}分遅れる`
-- `!add_event <event> <cron>`: 定期イベント {{event}} を追加する
+- `!points ls`: ポイントを確認する
+- `!points reset`: ポイントをリセットする
+- `+<num>`: {{num}}分遅れる
+- `!events ls`: 定期イベントを確認する
+- `!events add <event> <cron>`: 定期イベント {{event}} を追加する
+- `!events update <event> <cron>`: 定期イベント {{event}} を更新する
+- `!events rm <event>`: 定期イベント {{event}} を削除する
 "#, &version)
     ))
 }
 
 /// !all returns all delays info
-async fn all() -> Result<Option<String>, anyhow::Error> {
+async fn ls_points() -> Result<Option<String>, anyhow::Error> {
     let pool = Pool::<Postgres>::connect(&CONFIG.database_url.to_string()).await?;
     let repo = UserRepository { pool };
     let users = repo.get_all_users().await?;
@@ -35,7 +41,7 @@ async fn all() -> Result<Option<String>, anyhow::Error> {
 }
 
 /// !reset
-async fn reset() -> Result<Option<String>, anyhow::Error> {
+async fn reset_points() -> Result<Option<String>, anyhow::Error> {
     let pool = Pool::<Postgres>::connect(&CONFIG.database_url.to_string()).await?;
     let repo = UserRepository { pool };
     repo.delete_all_users().await?;
@@ -58,59 +64,48 @@ async fn delay(id: &String, name: &String, amount: i32) -> Result<Option<String>
 }
 
 /// returns latest 10 events
-async fn events() -> Result<Option<String>, anyhow::Error> {
+async fn ls_events() -> Result<Option<String>, anyhow::Error> {
     let pool = Pool::<Postgres>::connect(&CONFIG.database_url.to_string()).await?;
     let repo =  EventRepository { pool };
     let events = repo.get_all_events().await?;
 
-    let latest_events = events
-        .iter()
-        .flat_map(|event|
-            Schedule::from_str(event.cron.as_str())
-                .unwrap()
-                .upcoming(Local)
-                .take(10)
-                .collect::<Vec<DateTime<Local>>>()
-        )
-        .into_iter()
-        .sorted()
-        .iter()
-        .take(10)
-        .map(|d| d.format("%m月%d日(%a) %H時").to_string())
-        .map(|s| format!("- {}", s))
-        .collect::<Vec<String>>()
-        .join("\n");
+    let mut res: String = "".to_string();
 
-    Ok(Some(latest_events))
-}
+    res += "\n**👀 Events**\n";
+    res += events
+        .iter()
+        .map(|e| format!("- {}: `{}`", e.event, e.cron))
+        .collect::<Vec<_>>()
+        .join("\n")
+        .as_str();
+    res += "\n**🔥 Upcoming**\n";
+    res += repo.get_latest_events_by_limit(events, LIMIT)
+        .map(|event| format!("- {} **{}**", event.date.format("%m/%d(%a) %H~"), event.event))
+        .collect::<Vec<_>>()
+        .join("\n")
+        .as_str();
 
-/// cron-like -> cron
-fn parse_date_pattern(pattern: String) -> Option<String> {
-    todo!()
-    // let args = pattern.split(" ")
-    //     .collect::<Vec<&str>>();
-    // if args.len() < 2 {
-    //     return None
-    // }
-    // Some(format!("0 0 {} * * {} *", args[0], args[1]))
+    Ok(Some(res))
 }
 
 /// register periodic event
 /// !add <event> <cron-pattern>
-async fn add_event(event_name: String, cron_pattern: String) -> Result<Option<String>, anyhow::Error> {
+async fn add_events(event_name: &String, cron_pattern: &String) -> Result<Option<String>, anyhow::Error> {
     let pool = Pool::<Postgres>::connect(&CONFIG.database_url.to_string()).await?;
     let repo =  EventRepository { pool };
 
-    match Schedule::from_str(&cron_pattern[..]) {
+    dbg!("!add_event", event_name, cron_pattern);
+
+    match Schedule::from_str(cron_pattern) {
         Ok(schedule) => {
             let schedules = schedule.upcoming(Local)
-            .take(5)
+            .take(PREVIEW_LIMIT)
             .map(|d| d.format("%m月%d日(%a) %H時").to_string())
             .map(|s| format!("- {}", s))
-            .collect::<Vec<String>>()
+            .collect::<Vec<_>>()
             .join("\n");
 
-            repo.insert_event(&event_name, &cron_pattern).await?;
+            repo.insert_event(event_name, cron_pattern).await?;
 
             Ok(Some(format!("✨ {} を登録しました\n{}", event_name, schedules)))
         },
@@ -118,20 +113,22 @@ async fn add_event(event_name: String, cron_pattern: String) -> Result<Option<St
     }
 }
 
-async fn update_event(event_name: String, cron_pattern: String) -> Result<Option<String>, anyhow::Error> {
+async fn update_events(event_name: &String, cron_pattern: &String) -> Result<Option<String>, anyhow::Error> {
     let pool = Pool::<Postgres>::connect(&CONFIG.database_url.to_string()).await?;
     let repo =  EventRepository { pool };
 
-    match Schedule::from_str(&cron_pattern[..]) {
+    dbg!("!update_event", event_name, cron_pattern);
+
+    match Schedule::from_str(cron_pattern) {
         Ok(schedule) => {
             let schedules = schedule.upcoming(Local)
-            .take(5)
+            .take(PREVIEW_LIMIT)
             .map(|d| d.format("%m月%d日(%a) %H時").to_string())
             .map(|s| format!("- {}", s))
-            .collect::<Vec<String>>()
+            .collect::<Vec<_>>()
             .join("\n");
 
-            repo.update_event(&event_name, &cron_pattern).await?;
+            repo.update_event(event_name, cron_pattern).await?;
 
             Ok(Some(format!("✨ {} を更新しました\n{}", event_name, schedules)))
         },
@@ -139,28 +136,76 @@ async fn update_event(event_name: String, cron_pattern: String) -> Result<Option
     }
 }
 
+async fn delete_events(event_name: &String) -> Result<Option<String>, anyhow::Error> {
+    let pool = Pool::<Postgres>::connect(&CONFIG.database_url.to_string()).await?;
+    let repo =  EventRepository { pool };
+
+    dbg!("!delete_event", event_name);
+
+    match repo.delete_events(event_name).await {
+        Ok(_) => Ok(Some(format!("✨ {} を削除しました", event_name))),
+        Err(err) => Err(anyhow!(err)),
+    }
+}
+
 pub async fn process_cmd(msg: &Message) -> Result<Option<String>, anyhow::Error> {
     match msg.content.as_str() {
         "!help" => help(),
-        "!all" => all().await,
-        "!reset" => reset().await,
-        _ if msg.content.starts_with("!add_event") => {
+        // !points cmds
+        _ if msg.content.starts_with("!points") => {
             let args: Vec<&str> = msg.content.split(" ").collect();
-            if args.len() < 3 {
-                return Ok(Some("invalid".to_string()))
+            if args.len() < 2 {
+                return Ok(Some("invalid args".to_string()))
             }
-            let (event, pattern) = (args[1].to_string(), args[2..].join(" "));
-            add_event(event, pattern).await
+
+            match args[1] {
+                "ls" => {
+                    ls_points().await
+                },
+                "reset" => {
+                    reset_points().await
+                },
+                _ => Ok(Some("invalid sub cmd".to_string()))
+            }
         },
-        _ if msg.content.starts_with("!update_event") => {
+        // !events cmds
+         _ if msg.content.starts_with("!events") => {
             let args: Vec<&str> = msg.content.split(" ").collect();
-            if args.len() < 3 {
-                return Ok(Some("invalid".to_string()))
+            if args.len() < 2 {
+                return Ok(Some("invalid args".to_string()))
             }
-            let (event, pattern) = (args[1].to_string(), args[2..].join(" "));
-            update_event(event, pattern).await
+
+            match args[1] {
+                "ls" => {
+                    ls_events().await
+                },
+                "add" => {
+                    let args: Vec<&str> = msg.content.split(" ").collect();
+                    if args.len() < 4 {
+                        return Ok(Some("invalid args".to_string()))
+                    }
+                    let (event, pattern) = (args[2].to_string(), args[3..].join(" "));
+                    add_events(&event, &pattern).await
+                },
+                "update" => {
+                    let args: Vec<&str> = msg.content.split(" ").collect();
+                    if args.len() < 4 {
+                        return Ok(Some("invalid args".to_string()))
+                    }
+                    let (event, pattern) = (args[2].to_string(), args[3..].join(" "));
+                    update_events(&event, &pattern).await
+                },
+                "rm" => {
+                    let args: Vec<&str> = msg.content.split(" ").collect();
+                    if args.len() < 3 {
+                        return Ok(Some("invalid args".to_string()))
+                    }
+                    let event = args[2].to_string();
+                    delete_events(&event).await
+                },
+                _ => Ok(Some("invalid cmd".to_string()))
+            }
         },
-        _ if msg.content.starts_with("!events") => events().await,
         _ if msg.content.starts_with("+") => {
             if let Some(caps) = Regex::new(r"^\+(\d+)").unwrap().captures(&msg.content) {
                 let amount: i32 = caps.at(1).unwrap().parse().unwrap();
