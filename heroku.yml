@@ -9,6 +9,7 @@ release:
   image: worker
   command:
     - cargo make migrate
+    - cargo run
 run:
   worker:
     command:
